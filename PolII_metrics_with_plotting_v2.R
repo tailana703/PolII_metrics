@@ -22,13 +22,10 @@ DeriveExpressedGenes <- function(counts, phenodata) {
 
 ##Step1.2: loading annotation and extracting unique expressed genes longer than 2000 bp
 ##Make sure to paste path to annotation file
-ObtainingBwtoolRegions <- function(expressed_genes) {
+ObtainingBwtoolRegions <- function(expressed_genes, gff_file) {
   require(rtracklayer)
   require(dplyr)
   require(data.table)
-  ## paste your path to annotation .gtf!!!
-  #gff_file <- "/Users/sveta/gencode.v19.annotation.gtf"
-  gff_file <- "/Users/sveta/gencode.v38.primary_assembly.annotation.gtf"
   gff_annot <- rtracklayer::import(gff_file) %>% as.data.frame() 
   gff_annot$gene_id <- nth(tstrsplit(gff_annot$gene_id, split = "\\."), n =1)
                            
@@ -124,13 +121,41 @@ kmeansClusteringIndices <- function(average_indices, ncenters) {
   cl
 }
 
+###Step4 (optional) - follow-up on found gene clusters: gene lengths 
+
+clusters_gene_lengths <- function(clusters = cl, annotation = annot) {
+  cluster_genes_names <- list()
+  cluster_genes_lengths <- list()
+  for (i in 1:length(cl$size)) {
+    cluster_genes_names[[i]] <- names(cl$cluster[cl$cluster==i])
+    nrow_annot <- which(annot$gene_id %in% names(cl$cluster[cl$cluster==i]))
+    cluster_genes_lengths[[i]] <- annot$width[nrow_annot]
+  }
+  result <- list(cluster_genes_names, cluster_genes_lengths)
+  names(result) <- c("genes", "lengths")
+  result
+}
+
+
 ################################################################################
 ###Start
 
 #setwd("//") ##specify your working directory
+# In case of difficulties when installing packages, use the following code (example - installing DESEq2 package):
+# if (!require("BiocManager", quietly = TRUE))
+# install.packages("BiocManager")
+# BiocManager::install("DESeq2")
+
 ## Importing counts to derive expressed genes, example files can be found in the repo
 library(readr)
 counts <- as.data.frame(read_csv("counts.csv"))
+
+## if counts are stored in .xlsx or .txt format, use different functions:
+#library(readxl)
+#library(readr)
+#counts <- as.data.frame(read_excel("counts.xlsx"))
+#counts <- as.data.frame(read_delim("counts.txt"))
+
 rownames(counts) <- counts$Genes
 counts <- counts[, -1]
 pheno <- as.data.frame(read_delim("phenodata.txt"))
@@ -144,8 +169,11 @@ genes <- default_genes$genes
 
 ## Using expressed genes subset, creating .bed regions file corresponding to 
 ## numerator and denominator for Index calculation (will be in your working directory). 
-## Annotation is saved in 'annot' df:
-annot <- ObtainingBwtoolRegions(genes)
+## Make sure .gtf annotation is on your hard drive and specify the path:
+
+#gff_file <- "/Users/sveta/gencode.v19.annotation.gtf" #OR
+gff_file <- "/Users/sveta/gencode.v38.primary_assembly.annotation.gtf"
+annot <- ObtainingBwtoolRegions(genes, gff_file)
 
 ## after running bwtool on your bigwig files and obtained regions
 ## bwtool example (CLI): bwtool summary Proc_numerator_data.bed RPB1_shControl_rep1.bigwig output1.txt  -header -with-sum
@@ -257,17 +285,28 @@ server <- function(input, output, session) {
 shinyApp(ui = ui, server = server)
 
 ###optional - k-means clustering of Indices/genes
-## usual number of clusters 2-4
+## usual number of clusters 2-4 - put the desired number in the call
 
-cl <- kmeansClusteringIndices(PI$average_indices, 3)
+cl <- kmeansClusteringIndices(PI$average_indices, ncenters = 3)
 cl$centers ## shows "central points" of the clusters. Are there any differences?
-## Follow-up on the genes within clusters
-cl1 <- names(cl$cluster[cl$cluster==1])
-cl2 <- names(cl$cluster[cl$cluster==2])
-cl3 <- names(cl$cluster[cl$cluster==3])
+
+## Follow-up on the genes within clusters using clusters_gene_lengths function
+resulting_lengths <- clusters_gene_lengths(clusters = cl, annotation = annot)
+
+## example of plotting gene lengths when number of clusters = 3:
+boxplot(resulting_lengths$lengths[[1]], 
+        resulting_lengths$lengths[[2]], 
+        resulting_lengths$lengths[[3]], 
+        outline = F, col = "purple",
+        ylab = "Gene length, bp",
+        xlab = "Clusters",
+        main = "PI cluster vs gene length",
+        names = c("1", "2", "3"))
+
 
 ###Bonus: cluster visualization with Rshiny!
 library(rmdexamples)
 kmeans_cluster(PI$average_indices)
 kmeans_cluster(TR$average_indices)
 kmeans_cluster(Proc$average_indices)
+
